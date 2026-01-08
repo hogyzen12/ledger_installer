@@ -26,6 +26,8 @@ pub enum Message {
     InstallMain,
     UpdateTest,
     InstallTest,
+    UpdateSolana,
+    InstallSolana,
     #[allow(unused)]
     Connect,
     GenuineCheck,
@@ -50,6 +52,8 @@ pub struct LedgerInstaller {
     main_latest_version: Version,
     test_app_version: Version,
     test_latest_version: Version,
+    solana_app_version: Version,
+    solana_latest_version: Version,
     user_message: Option<String>,
     device_is_genuine: Option<bool>,
     device_busy: bool,
@@ -80,6 +84,8 @@ impl Application for LedgerInstaller {
             main_latest_version: Version::None,
             test_app_version: Version::None,
             test_latest_version: Version::None,
+            solana_app_version: Version::None,
+            solana_latest_version: Version::None,
             user_message: Some("Please connect a device and unlock it...".to_string()),
             device_is_genuine: None,
             device_busy: false,
@@ -117,6 +123,10 @@ impl Application for LedgerInstaller {
                     self.device_busy = false;
                     self.test_app_version = version;
                 }
+                LedgerMessage::SolanaAppVersion(version) => {
+                    self.device_busy = false;
+                    self.solana_app_version = version;
+                }
                 LedgerMessage::DisplayMessage(s, alarm) => {
                     log::info!(
                         "LedgerInstaller::update(DisplayMessage({}), {:?})",
@@ -136,6 +146,9 @@ impl Application for LedgerInstaller {
                 LedgerMessage::LatestApps(bitcoin, test) => {
                     self.main_latest_version = bitcoin;
                     self.test_latest_version = test;
+                }
+                LedgerMessage::LatestSolanaApp(solana) => {
+                    self.solana_latest_version = solana;
                 }
                 _ => {
                     log::debug!(
@@ -167,6 +180,15 @@ impl Application for LedgerInstaller {
                 self.test_app_version = Version::None;
                 self.device_busy = true;
                 self.send_ledger_msg(LedgerMessage::InstallTest)
+            }
+            Message::UpdateSolana => {
+                self.send_ledger_msg(LedgerMessage::UpdateSolana);
+                self.device_busy = true;
+            }
+            Message::InstallSolana => {
+                self.solana_app_version = Version::None;
+                self.device_busy = true;
+                self.send_ledger_msg(LedgerMessage::InstallSolana)
             }
             Message::GenuineCheck => {
                 self.device_busy = true;

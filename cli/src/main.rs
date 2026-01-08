@@ -1,9 +1,10 @@
 use std::{env, process};
 
 use ledger_manager::{
-    genuine_check, install_bitcoin_app,
+    genuine_check, install_app, install_bitcoin_app,
     ledger_transport_hidapi::{hidapi::HidApi, TransportNativeHID},
-    list_installed_apps, open_bitcoin_app, update_bitcoin_app, DeviceInfo, InstallErr, UpdateErr,
+    list_installed_apps, open_app, open_bitcoin_app, update_app, update_bitcoin_app, DeviceInfo,
+    InstallErr, LedgerApp, UpdateErr,
 };
 
 // Print on stderr and exit with 1.
@@ -24,6 +25,9 @@ enum Command {
     InstallTestApp,
     UpdateTestApp,
     OpenTestApp,
+    InstallSolana,
+    UpdateSolana,
+    OpenSolana,
     UpdateFirmware,
 }
 
@@ -31,6 +35,7 @@ impl Command {
     /// Read command from environment variables.
     pub fn get() -> Option<Self> {
         let is_testnet = env::var("LEDGER_TESTNET").is_ok();
+        let is_solana = env::var("LEDGER_SOLANA").is_ok();
         let cmd_str = env::var("LEDGER_COMMAND").ok()?;
 
         if cmd_str == "getinfo" {
@@ -38,23 +43,29 @@ impl Command {
         } else if cmd_str == "genuinecheck" {
             Some(Self::GenuineCheck)
         } else if cmd_str == "installapp" {
-            Some(if is_testnet {
-                Self::InstallTestApp
+            if is_solana {
+                Some(Self::InstallSolana)
+            } else if is_testnet {
+                Some(Self::InstallTestApp)
             } else {
-                Self::InstallMainApp
-            })
+                Some(Self::InstallMainApp)
+            }
         } else if cmd_str == "updateapp" {
-            Some(if is_testnet {
-                Self::UpdateTestApp
+            if is_solana {
+                Some(Self::UpdateSolana)
+            } else if is_testnet {
+                Some(Self::UpdateTestApp)
             } else {
-                Self::UpdateMainApp
-            })
+                Some(Self::UpdateMainApp)
+            }
         } else if cmd_str == "openapp" {
-            Some(if is_testnet {
-                Self::OpenTestApp
+            if is_solana {
+                Some(Self::OpenSolana)
+            } else if is_testnet {
+                Some(Self::OpenTestApp)
             } else {
-                Self::OpenMainApp
-            })
+                Some(Self::OpenMainApp)
+            }
         } else if cmd_str == "updatefirm" {
             Some(Self::UpdateFirmware)
         } else {
@@ -105,7 +116,7 @@ fn perform_genuine_check(ledger_api: &TransportNativeHID) {
 }
 
 // Install the Bitcoin app on the device.
-fn install_app(ledger_api: &TransportNativeHID, is_testnet: bool) {
+fn install_bitcoin(ledger_api: &TransportNativeHID, is_testnet: bool) {
     println!("You may have to allow on your device 1) listing installed apps 2) the Ledger manager to install the app.");
     match install_bitcoin_app(ledger_api, is_testnet) {
         Ok(()) => println!("Successfully installed the app."),
@@ -117,7 +128,7 @@ fn install_app(ledger_api: &TransportNativeHID, is_testnet: bool) {
     }
 }
 
-fn update_app(ledger_api: &TransportNativeHID, is_testnet: bool) {
+fn update_bitcoin(ledger_api: &TransportNativeHID, is_testnet: bool) {
     println!("You may have to allow on your device 1) listing installed apps 2) the Ledger manager to install the app.");
     match update_bitcoin_app(ledger_api, is_testnet) {
         Ok(()) => println!("Successfully updated the app."),
@@ -130,9 +141,41 @@ fn update_app(ledger_api: &TransportNativeHID, is_testnet: bool) {
     }
 }
 
-fn open_app(ledger_api: &TransportNativeHID, is_testnet: bool) {
+fn open_bitcoin(ledger_api: &TransportNativeHID, is_testnet: bool) {
     if let Err(e) = open_bitcoin_app(ledger_api, is_testnet) {
         error!("Error opening Bitcoin app: {}", e);
+    }
+}
+
+// Install the Solana app on the device.
+fn install_solana(ledger_api: &TransportNativeHID) {
+    println!("You may have to allow on your device 1) listing installed apps 2) the Ledger manager to install the app.");
+    match install_app(ledger_api, LedgerApp::Solana) {
+        Ok(()) => println!("Successfully installed the Solana app."),
+        Err(InstallErr::AlreadyInstalled) => {
+            error!("Solana app already installed. Use the update command to update it.")
+        }
+        Err(InstallErr::AppNotFound) => error!("Could not get info about Solana app."),
+        Err(InstallErr::Any(e)) => error!("Error installing Solana app: {}.", e),
+    }
+}
+
+fn update_solana(ledger_api: &TransportNativeHID) {
+    println!("You may have to allow on your device 1) listing installed apps 2) the Ledger manager to install the app.");
+    match update_app(ledger_api, LedgerApp::Solana) {
+        Ok(()) => println!("Successfully updated the Solana app."),
+        Err(UpdateErr::NotInstalled) => {
+            error!("Solana app isn't installed. Use the install command instead.")
+        }
+        Err(UpdateErr::AppNotFound) => error!("Could not get info about Solana app."),
+        Err(UpdateErr::AlreadyLatest) => error!("Solana app is already at the latest version."),
+        Err(UpdateErr::Any(e)) => error!("Error updating Solana app: {}.", e),
+    }
+}
+
+fn open_solana(ledger_api: &TransportNativeHID) {
+    if let Err(e) = open_app(ledger_api, LedgerApp::Solana) {
+        error!("Error opening Solana app: {}", e);
     }
 }
 
@@ -152,22 +195,31 @@ fn main() {
             perform_genuine_check(&ledger_api);
         }
         Command::InstallMainApp => {
-            install_app(&ledger_api, false);
+            install_bitcoin(&ledger_api, false);
         }
         Command::InstallTestApp => {
-            install_app(&ledger_api, true);
+            install_bitcoin(&ledger_api, true);
         }
         Command::OpenMainApp => {
-            open_app(&ledger_api, false);
+            open_bitcoin(&ledger_api, false);
         }
         Command::OpenTestApp => {
-            open_app(&ledger_api, true);
+            open_bitcoin(&ledger_api, true);
         }
         Command::UpdateMainApp => {
-            update_app(&ledger_api, false);
+            update_bitcoin(&ledger_api, false);
         }
         Command::UpdateTestApp => {
-            update_app(&ledger_api, true);
+            update_bitcoin(&ledger_api, true);
+        }
+        Command::InstallSolana => {
+            install_solana(&ledger_api);
+        }
+        Command::UpdateSolana => {
+            update_solana(&ledger_api);
+        }
+        Command::OpenSolana => {
+            open_solana(&ledger_api);
         }
         Command::UpdateFirmware => {
             unimplemented!()

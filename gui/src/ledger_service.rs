@@ -5,8 +5,10 @@ use std::error::Error;
 use form_urlencoded::Serializer as UrlSerializer;
 use ledger_manager::{
     bitcoin_latest_app, genuine_check, get_latest_apps,
+    install_app as ledger_install_app, latest_app,
     ledger_transport_hidapi::{hidapi::HidApi, TransportNativeHID},
-    list_installed_apps, query_via_websocket, DeviceInfo, BASE_SOCKET_URL,
+    list_installed_apps, query_via_websocket, update_app as ledger_update_app, DeviceInfo,
+    InstallErr, LedgerApp, UpdateErr, BASE_SOCKET_URL,
 };
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
@@ -18,7 +20,7 @@ listener!(LedgerListener, LedgerMessage, Message, LedgerServiceMsg);
 fn check_apps_installed<M>(
     transport: &TransportNativeHID,
     msg_callback: M,
-) -> Result<(Model, Version, Version), Box<dyn Error>>
+) -> Result<(Model, Version, Version, Version), Box<dyn Error>>
 where
     M: Fn(&str, bool),
 {
@@ -26,6 +28,7 @@ where
     msg_callback("Querying installed apps. Please confirm on device.", false);
     let mut mainnet = Version::NotInstalled;
     let mut testnet = Version::NotInstalled;
+    let mut solana = Version::NotInstalled;
     let mut model = Model::Unknown;
     match list_installed_apps(transport) {
         Ok(apps) => {
@@ -41,6 +44,10 @@ where
                     testnet = Version::Installed(app.version);
                     model = Model::from_app_firmware(&app.firmware);
                     log::debug!("Testnet App installed");
+                } else if app.version_name == "Solana" {
+                    solana = Version::Installed(app.version);
+                    model = Model::from_app_firmware(&app.firmware);
+                    log::debug!("Solana App installed");
                 }
             }
         }
@@ -53,7 +60,7 @@ where
             return Err(e);
         }
     }
-    Ok((model, mainnet, testnet))
+    Ok((model, mainnet, testnet, solana))
 }
 
 fn check_latest_apps<M>(
@@ -152,6 +159,7 @@ struct VersionInfo {
     pub device_version: Option<String>,
     pub mainnet_version: Option<Version>,
     pub testnet_version: Option<Version>,
+    pub solana_version: Option<Version>,
 }
 
 #[allow(clippy::result_unit_err)]
@@ -193,13 +201,14 @@ where
         msg_callback("Querying installed apps. Please confirm on device.", false);
         if actual_device_version.is_none() && device_version.is_some() {
             match check_apps_installed(&transport, &msg_callback) {
-                Ok((model, mainnet, testnet)) => {
+                Ok((model, mainnet, testnet, solana)) => {
                     msg_callback("", false);
                     return Ok(VersionInfo {
                         device_model: Some(model),
                         device_version,
                         mainnet_version: Some(mainnet),
                         testnet_version: Some(testnet),
+                        solana_version: Some(solana),
                     });
                 }
                 Err(e) => {
@@ -213,6 +222,7 @@ where
             device_version,
             mainnet_version: None,
             testnet_version: None,
+            solana_version: None,
         })
     } else {
         Err(())
@@ -318,15 +328,19 @@ pub enum LedgerMessage {
     InstallMain,
     UpdateTest,
     InstallTest,
+    InstallSolana,
+    UpdateSolana,
     TryConnect,
     GenuineCheck,
 
     Connected(Option<String>, Option<String>),
     MainAppVersion(Version),
     TestAppVersion(Version),
+    SolanaAppVersion(Version),
     DisplayMessage(String, bool),
     DeviceIsGenuine(Option<bool>),
     LatestApps(Version, Version),
+    LatestSolanaApp(Version),
 }
 
 pub struct LedgerService {
@@ -336,8 +350,10 @@ pub struct LedgerService {
     device_version: Option<String>,
     mainnet_version: Version,
     testnet_version: Version,
+    solana_version: Version,
     last_mainnet: Version,
     last_testnet: Version,
+    last_solana: Version,
 }
 
 impl LedgerService {
@@ -370,6 +386,8 @@ impl LedgerService {
             LedgerMessage::InstallMain => self.install_main(),
             LedgerMessage::UpdateTest => self.update_test(),
             LedgerMessage::InstallTest => self.install_test(),
+            LedgerMessage::InstallSolana => self.install_solana(),
+            LedgerMessage::UpdateSolana => self.update_solana(),
             LedgerMessage::GenuineCheck => self.genuine_check(),
             _ => {
                 log::debug!("LedgerService.handle_message({:?}) -> unhandled!", msg)
@@ -412,6 +430,17 @@ impl LedgerService {
                     }
                 }
 
+                // check for latest Solana app
+                if self.last_solana.is_none() {
+                    if let Ok(device_info) = DeviceInfo::new(&transport) {
+                        if let Ok(Some(solana_app)) = latest_app(&device_info, LedgerApp::Solana) {
+                            let solana = Version::Latest(solana_app.version);
+                            self.last_solana = solana.clone();
+                            self.send_to_gui(LedgerMessage::LatestSolanaApp(solana));
+                        }
+                    }
+                }
+
                 log::info!("Get device info...");
                 // get versions of device & apps
                 if let Ok(info) = get_version_info(
@@ -435,9 +464,12 @@ impl LedgerService {
                         }
                         _ => {}
                     }
-                    if let (Some(main), Some(test)) = (info.mainnet_version, info.testnet_version) {
+                    if let (Some(main), Some(test), Some(solana)) =
+                        (info.mainnet_version, info.testnet_version, info.solana_version)
+                    {
                         self.mainnet_version = main;
                         self.testnet_version = test;
+                        self.solana_version = solana;
                         self.update_apps_version();
                     }
                     // clear message if not app detected
@@ -472,10 +504,17 @@ impl LedgerService {
                 self.send_to_gui(LedgerMessage::TestAppVersion(self.testnet_version.clone()));
             }
         }
+        match &self.solana_version {
+            Version::None => {}
+            _ => {
+                self.send_to_gui(LedgerMessage::SolanaAppVersion(self.solana_version.clone()));
+            }
+        }
         self.send_to_gui(LedgerMessage::LatestApps(
             self.last_mainnet.clone(),
             self.last_testnet.clone(),
-        ))
+        ));
+        self.send_to_gui(LedgerMessage::LatestSolanaApp(self.last_solana.clone()));
     }
 
     fn install(&mut self, testnet: bool) {
@@ -516,6 +555,65 @@ impl LedgerService {
 
     fn update_test(&mut self) {
         self.install(true);
+    }
+
+    fn install_solana(&mut self) {
+        let sender = self.sender.clone();
+        Self::display_message(&sender, "Installing Solana app...", false);
+
+        self.send_to_gui(LedgerMessage::SolanaAppVersion(Version::None));
+
+        if let Some(transport) = self.connect() {
+            Self::display_message(&sender, "Get device info from API...", false);
+            match ledger_install_app(&transport, LedgerApp::Solana) {
+                Ok(()) => {
+                    Self::display_message(&sender, "Solana app installed successfully!", false);
+                }
+                Err(InstallErr::AlreadyInstalled) => {
+                    Self::display_message(&sender, "Solana app is already installed. Use update instead.", true);
+                }
+                Err(InstallErr::AppNotFound) => {
+                    Self::display_message(&sender, "Could not find Solana app in catalog.", true);
+                }
+                Err(InstallErr::Any(e)) => {
+                    Self::display_message(&sender, &format!("Error installing Solana app: {}.", e), true);
+                }
+            }
+        }
+
+        self.device_version = None;
+        self.poll();
+    }
+
+    fn update_solana(&mut self) {
+        let sender = self.sender.clone();
+        Self::display_message(&sender, "Updating Solana app...", false);
+
+        self.send_to_gui(LedgerMessage::SolanaAppVersion(Version::None));
+
+        if let Some(transport) = self.connect() {
+            Self::display_message(&sender, "Get device info from API...", false);
+            match ledger_update_app(&transport, LedgerApp::Solana) {
+                Ok(()) => {
+                    Self::display_message(&sender, "Solana app updated successfully!", false);
+                }
+                Err(UpdateErr::NotInstalled) => {
+                    Self::display_message(&sender, "Solana app is not installed. Use install instead.", true);
+                }
+                Err(UpdateErr::AppNotFound) => {
+                    Self::display_message(&sender, "Could not find Solana app in catalog.", true);
+                }
+                Err(UpdateErr::AlreadyLatest) => {
+                    Self::display_message(&sender, "Solana app is already at the latest version.", true);
+                }
+                Err(UpdateErr::Any(e)) => {
+                    Self::display_message(&sender, &format!("Error updating Solana app: {}.", e), true);
+                }
+            }
+        }
+
+        self.device_version = None;
+        self.poll();
     }
 
     fn genuine_check(&mut self) {
@@ -568,8 +666,10 @@ impl ServiceFn<LedgerMessage, Sender<LedgerMessage>> for LedgerService {
             device_version: None,
             mainnet_version: Version::None,
             testnet_version: Version::None,
+            solana_version: Version::None,
             last_mainnet: Version::None,
             last_testnet: Version::None,
+            last_solana: Version::None,
         }
     }
 

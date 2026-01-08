@@ -4,10 +4,11 @@ use std::error::Error;
 
 use form_urlencoded::Serializer as UrlSerializer;
 use ledger_manager::{
-    bitcoin_latest_app, genuine_check, get_latest_apps, install_app, latest_app,
+    bitcoin_latest_app, genuine_check, get_latest_apps,
+    install_app as ledger_install_app, latest_app,
     ledger_transport_hidapi::{hidapi::HidApi, TransportNativeHID},
-    list_installed_apps, query_via_websocket, update_app, DeviceInfo, InstallErr, LedgerApp,
-    UpdateErr, BASE_SOCKET_URL,
+    list_installed_apps, query_via_websocket, update_app as ledger_update_app, DeviceInfo,
+    InstallErr, LedgerApp, UpdateErr, BASE_SOCKET_URL,
 };
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
@@ -564,7 +565,7 @@ impl LedgerService {
 
         if let Some(transport) = self.connect() {
             Self::display_message(&sender, "Get device info from API...", false);
-            match install_app(&transport, LedgerApp::Solana) {
+            match ledger_install_app(&transport, LedgerApp::Solana) {
                 Ok(()) => {
                     Self::display_message(&sender, "Solana app installed successfully!", false);
                 }
@@ -592,7 +593,7 @@ impl LedgerService {
 
         if let Some(transport) = self.connect() {
             Self::display_message(&sender, "Get device info from API...", false);
-            match update_app(&transport, LedgerApp::Solana) {
+            match ledger_update_app(&transport, LedgerApp::Solana) {
                 Ok(()) => {
                     Self::display_message(&sender, "Solana app updated successfully!", false);
                 }
@@ -653,7 +654,7 @@ impl LedgerService {
 }
 
 impl ServiceFn<LedgerMessage, Sender<LedgerMessage>> for LedgerService {
-    pub fn new(
+    fn new(
         sender: Sender<LedgerMessage>,
         receiver: Receiver<LedgerMessage>,
         loopback: Sender<LedgerMessage>,

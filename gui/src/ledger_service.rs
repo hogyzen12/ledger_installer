@@ -349,8 +349,10 @@ pub struct LedgerService {
     device_version: Option<String>,
     mainnet_version: Version,
     testnet_version: Version,
+    solana_version: Version,
     last_mainnet: Version,
     last_testnet: Version,
+    last_solana: Version,
 }
 
 impl LedgerService {
@@ -427,6 +429,17 @@ impl LedgerService {
                     }
                 }
 
+                // check for latest Solana app
+                if self.last_solana.is_none() {
+                    if let Ok(device_info) = DeviceInfo::new(&transport) {
+                        if let Ok(Some(solana_app)) = latest_app(&device_info, LedgerApp::Solana) {
+                            let solana = Version::Latest(solana_app.version);
+                            self.last_solana = solana.clone();
+                            self.send_to_gui(LedgerMessage::LatestSolanaApp(solana));
+                        }
+                    }
+                }
+
                 log::info!("Get device info...");
                 // get versions of device & apps
                 if let Ok(info) = get_version_info(
@@ -450,9 +463,12 @@ impl LedgerService {
                         }
                         _ => {}
                     }
-                    if let (Some(main), Some(test)) = (info.mainnet_version, info.testnet_version) {
+                    if let (Some(main), Some(test), Some(solana)) =
+                        (info.mainnet_version, info.testnet_version, info.solana_version)
+                    {
                         self.mainnet_version = main;
                         self.testnet_version = test;
+                        self.solana_version = solana;
                         self.update_apps_version();
                     }
                     // clear message if not app detected
@@ -487,10 +503,17 @@ impl LedgerService {
                 self.send_to_gui(LedgerMessage::TestAppVersion(self.testnet_version.clone()));
             }
         }
+        match &self.solana_version {
+            Version::None => {}
+            _ => {
+                self.send_to_gui(LedgerMessage::SolanaAppVersion(self.solana_version.clone()));
+            }
+        }
         self.send_to_gui(LedgerMessage::LatestApps(
             self.last_mainnet.clone(),
             self.last_testnet.clone(),
-        ))
+        ));
+        self.send_to_gui(LedgerMessage::LatestSolanaApp(self.last_solana.clone()));
     }
 
     fn install(&mut self, testnet: bool) {
@@ -630,7 +653,7 @@ impl LedgerService {
 }
 
 impl ServiceFn<LedgerMessage, Sender<LedgerMessage>> for LedgerService {
-    fn new(
+    pub fn new(
         sender: Sender<LedgerMessage>,
         receiver: Receiver<LedgerMessage>,
         loopback: Sender<LedgerMessage>,
@@ -642,8 +665,10 @@ impl ServiceFn<LedgerMessage, Sender<LedgerMessage>> for LedgerService {
             device_version: None,
             mainnet_version: Version::None,
             testnet_version: Version::None,
+            solana_version: Version::None,
             last_mainnet: Version::None,
             last_testnet: Version::None,
+            last_solana: Version::None,
         }
     }
 

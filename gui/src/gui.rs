@@ -97,7 +97,7 @@ impl Application for LedgerInstaller {
     }
 
     fn title(&self) -> String {
-        "Bacca - your Ledger Bitcoin companion".to_string()
+        "Bacca - your Ledger Bitcoin & Solana companion".to_string()
     }
 
     fn update(&mut self, event: Message) -> Command<Message> {
@@ -217,6 +217,8 @@ impl Application for LedgerInstaller {
             self.main_latest_version.clone(),
             self.test_app_version.clone(),
             self.test_latest_version.clone(),
+            self.solana_app_version.clone(),
+            self.solana_latest_version.clone(),
             self.device_busy,
         );
 
@@ -390,6 +392,8 @@ fn apps_container<'a>(
     bitcoin_latest: Version,
     test_version: Version,
     test_latest: Version,
+    solana_version: Version,
+    solana_latest: Version,
     device_busy: bool,
 ) -> Container<'a, Message, Theme, Renderer> {
     let network_size = 25;
@@ -464,6 +468,16 @@ fn apps_container<'a>(
     } else {
         None
     };
+    let install_solana_msg = if !device_busy {
+        Some(Message::InstallSolana)
+    } else {
+        None
+    };
+    let update_solana_msg = if !device_busy {
+        Some(Message::UpdateSolana)
+    } else {
+        None
+    };
 
     let bitcoin_button = btn(
         &bitcoin_version,
@@ -479,9 +493,18 @@ fn apps_container<'a>(
         update_test_msg,
     );
 
+    let solana_button = btn(
+        &solana_version,
+        &solana_latest,
+        install_solana_msg,
+        update_solana_msg,
+    );
+
     let bitcoin_version = version(bitcoin_version);
 
     let test_version = version(test_version);
+
+    let solana_version = version(solana_version);
 
     Container::new(
         Column::new()
@@ -544,9 +567,41 @@ fn apps_container<'a>(
                             .push(Space::with_height(Length::Fill)),
                     )
                     .push(Space::with_width(Length::Fill)),
+            )
+            .push(
+                Row::new()
+                    .push(Space::with_width(30))
+                    .push(Rule::horizontal(2))
+                    .push(Space::with_width(30)),
+            )
+            .push(
+                Row::new()
+                    .push(
+                        Column::new()
+                            .push(Space::with_height(Length::Fill))
+                            .push(Text::new("Solana").size(network_size))
+                            .push(Text::new(solana_version).style(theme::Text::Color(version_color)))
+                            .push(Space::with_height(Length::Fill))
+                            .width(vertical_rule_position)
+                            .align_items(Alignment::Center),
+                    )
+                    .push(
+                        Column::new()
+                            .push(Space::with_height(10))
+                            .push(Rule::vertical(1).style(theme::Rule::Light))
+                            .push(Space::with_height(5)),
+                    )
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        Column::new()
+                            .push(Space::with_height(Length::Fill))
+                            .push(solana_button)
+                            .push(Space::with_height(Length::Fill)),
+                    )
+                    .push(Space::with_width(Length::Fill)),
             ),
     )
     .style(theme::Container::Frame)
     .padding(10)
-    .height(200)
+    .height(280)
 }
